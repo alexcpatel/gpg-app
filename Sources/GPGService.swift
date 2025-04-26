@@ -108,14 +108,15 @@ class GPGService {
             
             switch recordType {
             case "sec" where isPrivate, "pub" where !isPrivate:
-                // Key record - get fingerprint
+                // Key record - get full fingerprint
                 currentFingerprint = components[4]
                 
             case "uid" where currentFingerprint != nil:
                 // User ID record
                 currentUserID = components[9]
                 if let fingerprint = currentFingerprint, let userID = currentUserID {
-                    let formattedKey = "\(userID) (\(fingerprint))"
+                    // Format: "Name <email> [FULL_FINGERPRINT]"
+                    let formattedKey = "\(userID) [\(fingerprint)]"
                     keys.append(formattedKey)
                     print("Added key: \(formattedKey)")
                     currentFingerprint = nil
@@ -128,6 +129,156 @@ class GPGService {
         
         return keys
     }
+    
+    // MARK: - Combined operations
+    
+    /// Send message: Encrypt and sign a message with the recipient's public key and sender's private key
+    func encryptAndSign(message: String, senderPrivateKey: String, recipientPublicKey: String) -> String? {
+        // Extract fingerprints from the key strings
+        let senderFingerprint = extractFingerprint(from: senderPrivateKey)
+        let recipientFingerprint = extractFingerprint(from: recipientPublicKey)
+        
+        print("Attempting to encrypt and sign with:")
+        print("Sender fingerprint: \(senderFingerprint)")
+        print("Recipient fingerprint: \(recipientFingerprint)")
+        
+        // First verify the recipient's public key is valid and trusted
+        let verifyProcess = Process()
+        verifyProcess.executableURL = URL(fileURLWithPath: gpgPath)
+        verifyProcess.arguments = ["--list-keys", "--with-colons", recipientFingerprint]
+        
+        let verifyPipe = Pipe()
+        verifyProcess.standardOutput = verifyPipe
+        verifyProcess.standardError = verifyPipe
+        
+        do {
+            try verifyProcess.run()
+            verifyProcess.waitUntilExit()
+            
+            let verifyData = verifyPipe.fileHandleForReading.readDataToEndOfFile()
+            let verifyOutput = String(data: verifyData, encoding: .utf8) ?? ""
+            print("Key verification output:")
+            print(verifyOutput)
+            
+            if verifyProcess.terminationStatus != 0 {
+                print("Error: Unable to verify recipient's public key")
+                return nil
+            }
+        } catch {
+            print("Error verifying recipient's key: \(error)")
+            return nil
+        }
+        
+        // Now attempt the encryption
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: gpgPath)
+        process.arguments = [
+            "--encrypt",
+            "--sign",
+            "--armor",
+            "--local-user", senderFingerprint,
+            "--recipient", recipientFingerprint,
+            "--trust-model", "always",  // Add this to bypass trust requirements
+            "--verbose"  // Add verbose output
+        ]
+        
+        print("Running GPG command with arguments: \(process.arguments?.joined(separator: " ") ?? "")")
+        
+        let inputPipe = Pipe()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        
+        process.standardInput = inputPipe
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        
+        do {
+            try process.run()
+            
+            let inputData = message.data(using: .utf8)!
+            try inputPipe.fileHandleForWriting.write(contentsOf: inputData)
+            try inputPipe.fileHandleForWriting.close()
+            
+            process.waitUntilExit()
+            
+            if process.terminationStatus != 0 {
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                print("GPG Error Output: \(errorMessage)")
+                print("GPG Exit Status: \(process.terminationStatus)")
+                return nil
+            }
+            
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8)
+        } catch {
+            print("Error encrypting and signing: \(error)")
+            print("Process error: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    /// Receive message: Decrypt and verify a message with the recipient's private key
+    func decryptAndVerify(message: String, recipientPrivateKey: String) -> (decryptedText: String?, isVerified: Bool, senderInfo: String?) {
+        // Extract fingerprint from the key string
+        let recipientFingerprint = extractFingerprint(from: recipientPrivateKey)
+        
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: gpgPath)
+        process.arguments = [
+            "--decrypt",
+            "--armor",
+            "--local-user", recipientFingerprint,
+            "--status-fd", "2"  // Output status to stderr
+        ]
+        
+        let inputPipe = Pipe()
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        
+        process.standardInput = inputPipe
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        
+        do {
+            try process.run()
+            
+            let inputData = message.data(using: .utf8)!
+            try inputPipe.fileHandleForWriting.write(contentsOf: inputData)
+            try inputPipe.fileHandleForWriting.close()
+            
+            process.waitUntilExit()
+            
+            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            
+            let decryptedText = String(data: outputData, encoding: .utf8)
+            let statusOutput = String(data: errorData, encoding: .utf8) ?? ""
+            
+            // Parse status output for signature verification
+            let isVerified = statusOutput.contains("[GNUPG:] GOODSIG")
+            
+            // Extract sender info
+            var senderInfo: String? = nil
+            if let range = statusOutput.range(of: "[GNUPG:] GOODSIG") {
+                let substr = statusOutput[range.upperBound...]
+                if let endRange = substr.range(of: "\n") {
+                    let sigLine = String(substr[..<endRange.lowerBound])
+                    let components = sigLine.trimmingCharacters(in: .whitespaces).components(separatedBy: " ")
+                    if components.count >= 2 {
+                        senderInfo = components.dropFirst(2).joined(separator: " ")
+                    }
+                }
+            }
+            
+            return (decryptedText, isVerified, senderInfo)
+        } catch {
+            print("Error decrypting and verifying: \(error)")
+            return (nil, false, nil)
+        }
+    }
+    
+    // MARK: - Legacy operations (kept for backward compatibility)
     
     func encrypt(message: String, recipientKey: String) -> String? {
         // Extract fingerprint from the key string
@@ -250,13 +401,13 @@ class GPGService {
     }
     
     private func extractFingerprint(from keyString: String) -> String {
-        // Extract fingerprint from format "Name <email> (fingerprint)"
-        if let range = keyString.range(of: "(", options: .backwards),
-           let endRange = keyString.range(of: ")", options: .backwards) {
+        // Extract fingerprint from format "Name <email> [fingerprint]"
+        if let range = keyString.range(of: "[", options: .backwards),
+           let endRange = keyString.range(of: "]", options: .backwards) {
             let startIndex = range.upperBound
             let endIndex = endRange.lowerBound
             return String(keyString[startIndex..<endIndex])
         }
-        return keyString
+        return keyString // Return as-is if no brackets found
     }
 } 

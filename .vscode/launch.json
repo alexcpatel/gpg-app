@@ -1,0 +1,22 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:GPGApp}",
+      "name": "Debug GPGApp",
+      "program": "${workspaceFolder:GPGApp}/.build/debug/GPGApp",
+      "preLaunchTask": "swift: Build Debug GPGApp"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:GPGApp}",
+      "name": "Release GPGApp",
+      "program": "${workspaceFolder:GPGApp}/.build/release/GPGApp",
+      "preLaunchTask": "swift: Build Release GPGApp"
+    }
+  ]
+}
