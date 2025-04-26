@@ -1,0 +1,9 @@
+version: "Apple Swift version 6.0.3 (swiftlang-6.0.3.1.10 clang-1600.0.30.1)"
+options: "ac2b5906a37744f5d7973cae440953300fe86095c2a3f97e20db83aad29244d9"
+build_start_time: [1745635104, 647162000]
+build_end_time: [1745635107, 787576000]
+inputs:
+  "/Users/alexpatel/Workspace/GPGApp/Sources/ContentView.swift": [1745630438, 829372419]
+  "/Users/alexpatel/Workspace/GPGApp/Sources/GPGApp.swift": [1745632554, 791124751]
+  "/Users/alexpatel/Workspace/GPGApp/Sources/GPGService.swift": [1745629991, 148696375]
+  "/Users/alexpatel/Workspace/GPGApp/Sources/main.swift": [1745630657, 261931570]
