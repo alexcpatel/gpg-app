@@ -38,7 +38,7 @@ struct KeySelectionMenu: View {
                 }
             }
             
-            Picker(selection: .constant(selectedKey), label: EmptyView()) {
+            Menu {
                 ForEach(keys, id: \.self) { key in
                     Button(action: { onSelect(key) }) {
                         if key == selectedKey {
@@ -50,14 +50,37 @@ struct KeySelectionMenu: View {
                             KeyDisplayView(key: key)
                         }
                     }
-                    .tag(key)
                 }
+            } label: {
+                HStack {
+                    if selectedKey.isEmpty {
+                        Text("Select a key")
+                            .foregroundColor(.secondary)
+                    } else {
+                        Image(systemName: "checkmark")
+                            .foregroundColor(.primary)
+                        KeyDisplayView(key: selectedKey)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(NSColor.controlBackgroundColor))
+                        .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
             }
-            .pickerStyle(.menu)
+            .buttonStyle(PlainButtonStyle())
             .frame(maxWidth: .infinity)
-            .frame(height: 32)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(6)
         }
     }
 }
@@ -69,7 +92,7 @@ struct KeyDisplayView: View {
     var body: some View {
         if let bracketRange = key.range(of: " ["),
            let endBracketRange = key.range(of: "]", options: .backwards) {
-            VStack(alignment: .leading) {
+            HStack(spacing: 4) {
                 Text(key[..<bracketRange.lowerBound])
                 Text(key[bracketRange.upperBound..<endBracketRange.lowerBound])
                     .font(.system(size: NSFont.smallSystemFontSize, design: .monospaced))
@@ -304,48 +327,6 @@ struct ContentView: View {
                 }
                 .padding(.horizontal)
                 
-                // Operation Button - Moved up right after key selection
-                HStack {
-                    Spacer()
-                    
-                    if selectedMode == .sendMessage {
-                        Button(action: {
-                            sendMessage()
-                        }) {
-                            HStack {
-                                Image(systemName: "lock.fill")
-                                Text("Encrypt & Sign")
-                            }
-                            .padding(.horizontal)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(
-                            currentMode.selectedPrivateKey.wrappedValue.isEmpty || 
-                            currentMode.selectedPublicKey.wrappedValue.isEmpty || 
-                            currentMode.inputText.wrappedValue.isEmpty
-                        )
-                    } else {
-                        Button(action: {
-                            receiveMessage()
-                        }) {
-                            HStack {
-                                Image(systemName: "lock.open.fill")
-                                Text("Decrypt & Verify")
-                            }
-                            .padding(.horizontal)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(
-                            currentMode.selectedPrivateKey.wrappedValue.isEmpty || 
-                            currentMode.inputText.wrappedValue.isEmpty
-                        )
-                    }
-                    
-                    Spacer()
-                }
-                
                 // Message Views
                 HStack(spacing: 20) {
                     MessageView(
@@ -387,15 +368,18 @@ struct ContentView: View {
                         if showCopyToast {
                             HStack(spacing: 8) {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
+                                    .foregroundColor(.secondary)
                                 Text("Copied to clipboard")
                                     .font(.subheadline)
-                                    .foregroundColor(.white)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
-                            .background(Color.black.opacity(0.85))
+                            .background(Color(NSColor.controlBackgroundColor))
                             .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                            )
                             .offset(x: -80, y: 0)
                             .transition(.opacity)
                             .zIndex(1)
@@ -403,6 +387,48 @@ struct ContentView: View {
                     }
                 }
                 .padding(.horizontal)
+                
+                // Operation Button - Moved down below text areas
+                HStack {
+                    Spacer()
+                    
+                    if selectedMode == .sendMessage {
+                        Button(action: {
+                            sendMessage()
+                        }) {
+                            HStack {
+                                Image(systemName: "lock.fill")
+                                Text("Encrypt & Sign")
+                            }
+                            .padding(.horizontal)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(
+                            currentMode.selectedPrivateKey.wrappedValue.isEmpty || 
+                            currentMode.selectedPublicKey.wrappedValue.isEmpty || 
+                            currentMode.inputText.wrappedValue.isEmpty
+                        )
+                    } else {
+                        Button(action: {
+                            receiveMessage()
+                        }) {
+                            HStack {
+                                Image(systemName: "lock.open.fill")
+                                Text("Decrypt & Verify")
+                            }
+                            .padding(.horizontal)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(
+                            currentMode.selectedPrivateKey.wrappedValue.isEmpty || 
+                            currentMode.inputText.wrappedValue.isEmpty
+                        )
+                    }
+                    
+                    Spacer()
+                }
                 .padding(.bottom)
             }
             .background(Color(NSColor.windowBackgroundColor))

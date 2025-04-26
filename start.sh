@@ -12,6 +12,9 @@ LAST_BUILD_TIME=0
 MIN_BUILD_INTERVAL=2  # Minimum seconds between builds
 DEBUG=1  # Set to 1 to enable debug output
 
+# Store the script's PID
+SCRIPT_PID=$$
+
 # Debug print function
 debug_print() {
     if [ $DEBUG -eq 1 ]; then
@@ -22,20 +25,37 @@ debug_print() {
 # Cleanup function
 cleanup() {
     echo "Cleaning up..."
+    # Kill all child processes of this script
+    pkill -P "$SCRIPT_PID" || true
+    
     # Kill the app if running
     pkill -f "$APP_NAME" || true
+    
     # Kill fswatch if running
-    [ -n "$FSWATCH_PID" ] && kill $FSWATCH_PID 2>/dev/null || true
-    # Remove flag file
+    if [ -n "$FSWATCH_PID" ]; then
+        kill "$FSWATCH_PID" 2>/dev/null || true
+    fi
+    
+    # Kill polling process if running
+    if [ -n "$POLLING_PID" ]; then
+        kill "$POLLING_PID" 2>/dev/null || true
+    fi
+    
+    # Remove temporary files
     rm -f "$FLAG_FILE"
+    rm -f "/tmp/gpgapp_last_check"
+    rm -f "/tmp/gpgapp_changed_file_$$"
+    
     # Restore terminal settings
     exec 3>&-
-    stty icanon echo
+    stty icanon echo 2>/dev/null || true
+    
+    # Exit explicitly
     exit 0
 }
 
-# Set up trap for script termination
-trap cleanup EXIT INT TERM
+# Set up trap for various signals
+trap cleanup EXIT INT TERM HUP
 
 # Function to check if we need a clean build
 need_clean_build() {
@@ -66,8 +86,10 @@ clear_icon_cache() {
 # Function to build and run the app
 build_and_run() {
     # Check if we need to respect the build interval
-    local current_time=$(date +%s)
-    local time_since_last_build=$((current_time - LAST_BUILD_TIME))
+    local current_time
+    current_time=$(date +%s)
+    local time_since_last_build
+    time_since_last_build=$((current_time - LAST_BUILD_TIME))
     
     if [ $time_since_last_build -lt $MIN_BUILD_INTERVAL ]; then
         echo "Skipping rebuild: Too soon after last build (${time_since_last_build}s < ${MIN_BUILD_INTERVAL}s)"
@@ -194,12 +216,18 @@ build_and_run
 LAST_BUILD_TIME=$(date +%s)  # Set initial build time
 
 # Watch for changes and app quit
-echo "Watching for changes in Sources directory. Press Enter to rebuild. Press Ctrl+C to stop."
+echo -e "\nWatching for changes in Sources directory. Press Enter to rebuild. Press Ctrl+C to stop."
 
 # Create terminal control to make it non-blocking
 exec 3<>/dev/tty
-# Put terminal into non-canonical mode (char-by-char input)
+
+# Configure terminal for input handling while preserving output formatting
 stty -icanon -echo <&3
+
+# Function to print status message
+print_status() {
+    echo -e "\n> $1"
+}
 
 # Set up a polling mechanism to check for Swift file changes
 (
@@ -232,26 +260,28 @@ while true; do
         fi
     fi
 
-    # Check if Enter was pressed
-    if read -t 1 -n 1 char <&3; then
-        if [ "$char" = $'\n' ]; then
-            handle_change "terminal input"
+    # Check for Enter key press
+    if read -r -t 1 -n 1 char <&3; then
+        ascii_code=$(printf "%d" "'$char")
+        if [ "$ascii_code" = "13" ] || [ "$ascii_code" = "10" ]; then  # Both CR and LF
+            print_status "Manual rebuild triggered"
+            trigger_rebuild
         fi
     fi
 
     # Check if app quit (only if not rebuilding)
     if ! is_app_running; then
-        echo "App was quit by user. Stopping watch."
-        # Kill polling process
-        [ -n "$POLLING_PID" ] && kill $POLLING_PID 2>/dev/null || true
-        cleanup
-        break
+        print_status "App was quit by user. Stopping watch."
+        if [ -n "$POLLING_PID" ]; then
+            kill "$POLLING_PID" 2>/dev/null || true
+        fi
+        cleanup  # This will exit the script
     fi
     
     # Short sleep to prevent busy waiting
-    sleep 1
+    sleep 0.1
 done
 
 # Restore terminal on exit (should be caught by trap, but good practice)
 exec 3>&-
-stty icanon echo
+stty sane
