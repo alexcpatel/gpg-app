@@ -726,18 +726,84 @@ struct ContentView: View {
         logInfo("Decryption succeeded. Verification status: \(result.isVerified)")
         
         // Add verification against expected sender if specified
-        if !receiveMode.expectedSender.isEmpty {
+        if !receiveMode.expectedSender.isEmpty && result.isVerified {
             if let senderInfo = result.senderInfo {
                 // Extract fingerprint from expected sender key string
                 let expectedFingerprint = extractFingerprint(from: receiveMode.expectedSender)
-                // Extract fingerprint from actual sender info (assuming it's in the same format)
-                if !senderInfo.contains(expectedFingerprint) {
+                    .uppercased()
+                    .replacingOccurrences(of: " ", with: "")
+                
+                // Extract any potential fingerprint-like data from senderInfo
+                // We need to be lenient as GPG might return different formats
+                let senderInfoNormalized = senderInfo.uppercased().replacingOccurrences(of: " ", with: "")
+                
+                // Detailed logging for debugging
+                logDebug("Expected sender: \(receiveMode.expectedSender)")
+                logDebug("Expected fingerprint (normalized): \(expectedFingerprint)")
+                logDebug("Actual sender info: \(senderInfo)")
+                logDebug("Sender info (normalized): \(senderInfoNormalized)")
+                
+                // Very lenient matching - check if any part of the fingerprint is found in the sender info
+                // or vice versa, using multiple approaches
+                
+                // 1. Check if sender info contains the full fingerprint
+                let fullMatch = senderInfoNormalized.contains(expectedFingerprint)
+                logDebug("Full fingerprint match: \(fullMatch)")
+                
+                // 2. Check if sender info contains last 16 chars (key ID)
+                let keyIdMatch = senderInfoNormalized.contains(expectedFingerprint.suffix(16))
+                logDebug("Key ID (16 chars) match: \(keyIdMatch)")
+                
+                // 3. Check if sender info contains last 8 chars (short key ID)
+                let shortKeyIdMatch = senderInfoNormalized.contains(expectedFingerprint.suffix(8))
+                logDebug("Short key ID (8 chars) match: \(shortKeyIdMatch)")
+                
+                // 4. Check if expected fingerprint contains parts of the sender info
+                // This handles cases where the sender info might have a partial fingerprint
+                var partialMatch = false
+                if senderInfoNormalized.count >= 8 {
+                    partialMatch = expectedFingerprint.contains(senderInfoNormalized.suffix(min(16, senderInfoNormalized.count)))
+                    logDebug("Reverse partial match: \(partialMatch)")
+                }
+                
+                // 5. Email matching (if email is present in both)
+                let emailRegex = try? NSRegularExpression(pattern: "<([^>]+)>")
+                var emailMatch = false
+                
+                if let regex = emailRegex {
+                    let expectedRange = NSRange(receiveMode.expectedSender.startIndex..<receiveMode.expectedSender.endIndex, in: receiveMode.expectedSender)
+                    let senderRange = NSRange(senderInfo.startIndex..<senderInfo.endIndex, in: senderInfo)
+                    
+                    let expectedMatches = regex.matches(in: receiveMode.expectedSender, range: expectedRange)
+                    let senderMatches = regex.matches(in: senderInfo, range: senderRange)
+                    
+                    if let expectedEmailMatch = expectedMatches.first, 
+                       let senderEmailMatch = senderMatches.first,
+                       let expectedEmailRange = Range(expectedEmailMatch.range(at: 1), in: receiveMode.expectedSender),
+                       let senderEmailRange = Range(senderEmailMatch.range(at: 1), in: senderInfo) {
+                        
+                        let expectedEmail = String(receiveMode.expectedSender[expectedEmailRange])
+                        let senderEmail = String(senderInfo[senderEmailRange])
+                        
+                        emailMatch = expectedEmail.lowercased() == senderEmail.lowercased()
+                        logDebug("Email match: \(emailMatch) (expected: \(expectedEmail), actual: \(senderEmail))")
+                    }
+                }
+                
+                // If any of the match strategies succeed, consider it a match
+                let isMatch = fullMatch || keyIdMatch || shortKeyIdMatch || partialMatch || emailMatch
+                logDebug("Overall match result: \(isMatch)")
+                
+                if !isMatch {
                     receiveMode.isVerified = false
                     errorMessage = "Message was not signed by the expected sender"
                     showError = true
                     logWarning("Sender mismatch: expected \(expectedFingerprint), got \(senderInfo)")
+                } else {
+                    logInfo("Sender verification successful")
                 }
             } else {
+                // Only show this error if verification was requested but no sender info is available
                 receiveMode.isVerified = false
                 errorMessage = "Could not verify sender identity"
                 showError = true

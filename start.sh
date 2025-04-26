@@ -66,11 +66,13 @@ print_status() {
 # Cleanup function
 cleanup() {
     log_info "Cleaning up..."
-    # Kill all child processes of this script
-    pkill -P "$SCRIPT_PID" || true
+    # First, try a normal cleanup
     
-    # Kill the app if running
-    pkill -f "$APP_NAME" || true
+    # Kill all child processes of this script
+    pkill -P "$SCRIPT_PID" 2>/dev/null || true
+    
+    # Kill the app if running - more specific process matching
+    pkill -f "$APP_BUNDLE/Contents/MacOS/$APP_NAME$" 2>/dev/null || true
     
     # Kill fswatch if running
     if [ -n "$FSWATCH_PID" ]; then
@@ -88,10 +90,17 @@ cleanup() {
     rm -f "/tmp/gpgapp_changed_file_$$"
     
     # Restore terminal settings
-    exec 3>&-
+    exec 3>&- 2>/dev/null || true
     stty sane 2>/dev/null || true
     
-    # Exit explicitly
+    # Last resort - kill all processes matching our script name
+    script_name=$(basename "$0")
+    my_pid=$$
+    for pid in $(pgrep -f "$script_name" | grep -v "$my_pid"); do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+    
+    # Exit explicitly with a clean status
     exit 0
 }
 
@@ -213,7 +222,8 @@ is_app_running() {
         return 0 # Treat as running
     fi
     # Otherwise, check if the process actually exists
-    pgrep -f "$APP_NAME" > /dev/null
+    # Be more specific to match only the actual app executable
+    pgrep -f "$APP_BUNDLE/Contents/MacOS/$APP_NAME$" > /dev/null
 }
 
 # Function to handle file change
