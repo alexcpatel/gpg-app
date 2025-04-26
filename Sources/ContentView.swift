@@ -8,6 +8,16 @@ struct KeySelectionMenu: View {
     let selectedKey: String
     let onSelect: (String) -> Void
     let onRefreshKeys: () -> Void
+    let allowDeselection: Bool
+    
+    init(title: String, keys: [String], selectedKey: String, onSelect: @escaping (String) -> Void, onRefreshKeys: @escaping () -> Void, allowDeselection: Bool = false) {
+        self.title = title
+        self.keys = keys
+        self.selectedKey = selectedKey
+        self.onSelect = onSelect
+        self.onRefreshKeys = onRefreshKeys
+        self.allowDeselection = allowDeselection
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -39,6 +49,13 @@ struct KeySelectionMenu: View {
             }
             
             Menu {
+                if allowDeselection {
+                    Button(action: { onSelect("") }) {
+                        Text("None")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
                 ForEach(keys, id: \.self) { key in
                     Button(action: { onSelect(key) }) {
                         if key == selectedKey {
@@ -289,13 +306,12 @@ struct ContentView: View {
         ZStack(alignment: .topLeading) {
             VStack(spacing: 16) {
                 // Mode selector
-                Picker("Mode", selection: $selectedMode) {
+                Picker("", selection: $selectedMode) {
                     ForEach(OperationMode.allCases) { mode in
                         Text(mode.rawValue).tag(mode)
                     }
                 }
                 .pickerStyle(SegmentedPickerStyle())
-                .padding(.horizontal)
                 .padding(.top)
                 
                 // Key Selection - moved up for better flow
@@ -310,7 +326,8 @@ struct ContentView: View {
                             currentMode.isVerified.wrappedValue = false
                             currentMode.senderInfo.wrappedValue = ""
                         },
-                        onRefreshKeys: loadKeys
+                        onRefreshKeys: loadKeys,
+                        allowDeselection: false
                     )
                     
                     if selectedMode == .sendMessage {
@@ -322,7 +339,8 @@ struct ContentView: View {
                                 currentMode.selectedPublicKey.wrappedValue = key
                                 currentMode.outputText.wrappedValue = ""
                             },
-                            onRefreshKeys: loadKeys
+                            onRefreshKeys: loadKeys,
+                            allowDeselection: false
                         )
                     } else {
                         KeySelectionMenu(
@@ -335,11 +353,11 @@ struct ContentView: View {
                                 currentMode.isVerified.wrappedValue = false
                                 currentMode.senderInfo.wrappedValue = ""
                             },
-                            onRefreshKeys: loadKeys
+                            onRefreshKeys: loadKeys,
+                            allowDeselection: true
                         )
                     }
                 }
-                .padding(.horizontal)
                 
                 // Message Views
                 HStack(spacing: 20) {
@@ -400,7 +418,6 @@ struct ContentView: View {
                         }
                     }
                 }
-                .padding(.horizontal)
                 
                 // Operation Button - Moved down below text areas
                 HStack {
@@ -442,6 +459,7 @@ struct ContentView: View {
                 }
                 .padding(.bottom)
             }
+            .padding(.horizontal)
             .background(Color(NSColor.windowBackgroundColor))
             .onAppear {
                 loadKeys()
