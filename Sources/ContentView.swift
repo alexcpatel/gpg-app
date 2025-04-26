@@ -471,31 +471,39 @@ struct ContentView: View {
             }
         }
         .onChange(of: receiveMode.inputText) { newValue in
-            print("Input text changed: '\(newValue)', isEmpty: \(newValue.isEmpty), trimmed isEmpty: \(newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)")
+            logDebug("Input text changed: '\(newValue)', isEmpty: \(newValue.isEmpty), trimmed isEmpty: \(newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)")
         }
         .onChange(of: selectedMode) { newMode in
-            print("Mode changed to: \(newMode)")
+            logInfo("Mode changed to: \(newMode)")
             // Remove the auto-fill functionality
         }
         .onChange(of: receiveMode.selectedPrivateKey) { newValue in
-            print("Private key changed to: \(newValue), isEmpty: \(newValue.isEmpty)")
+            logDebug("Private key changed to: \(newValue), isEmpty: \(newValue.isEmpty)")
         }
     }
     
     private func loadKeys() {
+        logDebug("Loading GPG keys")
         privateKeys = GPGService.shared.listPrivateKeys()
         publicKeys = GPGService.shared.listPublicKeys()
         
         if !privateKeys.isEmpty {
             sendMode.selectedPrivateKey = privateKeys[0]
             receiveMode.selectedPrivateKey = privateKeys[0]
+            logInfo("Loaded \(privateKeys.count) private keys")
+        } else {
+            logWarning("No private keys found")
         }
         if !publicKeys.isEmpty {
             sendMode.selectedPublicKey = publicKeys[0]
+            logInfo("Loaded \(publicKeys.count) public keys")
+        } else {
+            logWarning("No public keys found")
         }
     }
     
     private func sendMessage() {
+        logInfo("Encrypting and signing message")
         guard let result = GPGService.shared.encryptAndSign(
             message: sendMode.inputText,
             senderPrivateKey: sendMode.selectedPrivateKey,
@@ -503,25 +511,28 @@ struct ContentView: View {
         ) else {
             errorMessage = "Failed to encrypt and sign message"
             showError = true
+            logError("Failed to encrypt and sign message")
             return
         }
         
         sendMode.outputText = result
-        print("Encrypted message output:\n\(result)")
+        logDebug("Encrypted message output length: \(result.count) characters")
         sendMode.isVerified = false
         sendMode.senderInfo = ""
+        logInfo("Message successfully encrypted and signed")
     }
     
     private func receiveMessage() {
-        print("receiveMessage called. inputText: \(receiveMode.inputText), selectedPrivateKey: \(receiveMode.selectedPrivateKey)")
+        logInfo("Decrypting and verifying message")
+        logDebug("Input text length: \(receiveMode.inputText.count), selected private key: \(receiveMode.selectedPrivateKey)")
+        
         let result = GPGService.shared.decryptAndVerify(
             message: receiveMode.inputText,
             recipientPrivateKey: receiveMode.selectedPrivateKey
         )
-        print("decryptAndVerify result: \(result)")
         
         guard let decryptedText = result.decryptedText else {
-            print("Decryption failed, result: \(result)")
+            logError("Decryption failed")
             errorMessage = "Failed to decrypt message"
             showError = true
             return
@@ -530,7 +541,7 @@ struct ContentView: View {
         receiveMode.outputText = decryptedText
         receiveMode.isVerified = result.isVerified
         receiveMode.senderInfo = result.senderInfo ?? ""
-        print("Decryption succeeded. Output: \(decryptedText)")
+        logInfo("Decryption succeeded. Verification status: \(result.isVerified)")
         
         // Add verification against expected sender if specified
         if !receiveMode.expectedSender.isEmpty {
@@ -542,13 +553,13 @@ struct ContentView: View {
                     receiveMode.isVerified = false
                     errorMessage = "Message was not signed by the expected sender"
                     showError = true
-                    print("Sender mismatch: expected \(expectedFingerprint), got \(senderInfo)")
+                    logWarning("Sender mismatch: expected \(expectedFingerprint), got \(senderInfo)")
                 }
             } else {
                 receiveMode.isVerified = false
                 errorMessage = "Could not verify sender identity"
                 showError = true
-                print("No senderInfo in result")
+                logWarning("No sender information available for verification")
             }
         }
     }

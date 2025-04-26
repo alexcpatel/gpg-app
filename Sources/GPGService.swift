@@ -7,7 +7,7 @@ class GPGService {
     private init() {
         // Verify GPG is installed and accessible
         guard FileManager.default.fileExists(atPath: gpgPath) else {
-            print("Error: GPG not found at \(gpgPath)")
+            logError("GPG not found at \(gpgPath)")
             return
         }
         
@@ -24,13 +24,14 @@ class GPGService {
             process.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: data, encoding: .utf8) ?? ""
-            print("GPG Version: \(output)")
+            logInfo("GPG Version: \(output.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").first ?? "Unknown")")
         } catch {
-            print("Error testing GPG: \(error)")
+            logError("Error testing GPG: \(error)")
         }
     }
     
     func listPrivateKeys() -> [String] {
+        logDebug("Listing private keys")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: gpgPath)
         process.arguments = ["--list-secret-keys", "--with-colons"]
@@ -47,21 +48,22 @@ class GPGService {
             let output = String(data: data, encoding: .utf8) ?? ""
             
             if process.terminationStatus != 0 {
-                print("Error listing private keys. Status: \(process.terminationStatus)")
-                print("Output: \(output)")
+                logError("Error listing private keys. Status: \(process.terminationStatus)")
+                logDebug("GPG Output: \(output)")
                 return []
             }
             
             let keys = parseKeys(from: output, isPrivate: true)
-            print("Found \(keys.count) private keys")
+            logInfo("Found \(keys.count) private keys")
             return keys
         } catch {
-            print("Error listing private keys: \(error)")
+            logError("Error listing private keys: \(error)")
             return []
         }
     }
     
     func listPublicKeys() -> [String] {
+        logDebug("Listing public keys")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: gpgPath)
         process.arguments = ["--list-keys", "--with-colons"]
@@ -78,16 +80,16 @@ class GPGService {
             let output = String(data: data, encoding: .utf8) ?? ""
             
             if process.terminationStatus != 0 {
-                print("Error listing public keys. Status: \(process.terminationStatus)")
-                print("Output: \(output)")
+                logError("Error listing public keys. Status: \(process.terminationStatus)")
+                logDebug("GPG Output: \(output)")
                 return []
             }
             
             let keys = parseKeys(from: output, isPrivate: false)
-            print("Found \(keys.count) public keys")
+            logInfo("Found \(keys.count) public keys")
             return keys
         } catch {
-            print("Error listing public keys: \(error)")
+            logError("Error listing public keys: \(error)")
             return []
         }
     }
@@ -98,7 +100,7 @@ class GPGService {
         var currentFingerprint: String?
         var currentUserID: String?
         
-        print("Parsing \(lines.count) lines of GPG output")
+        logDebug("Parsing \(lines.count) lines of GPG output")
         
         for line in lines {
             let components = line.components(separatedBy: ":")
@@ -118,7 +120,7 @@ class GPGService {
                     // Format: "Name <email> [FULL_FINGERPRINT]"
                     let formattedKey = "\(userID) [\(fingerprint)]"
                     keys.append(formattedKey)
-                    print("Added key: \(formattedKey)")
+                    logDebug("Added key: \(formattedKey)")
                     currentFingerprint = nil
                     currentUserID = nil
                 }
@@ -138,9 +140,9 @@ class GPGService {
         let senderFingerprint = extractFingerprint(from: senderPrivateKey)
         let recipientFingerprint = extractFingerprint(from: recipientPublicKey)
         
-        print("Attempting to encrypt and sign with:")
-        print("Sender fingerprint: \(senderFingerprint)")
-        print("Recipient fingerprint: \(recipientFingerprint)")
+        logInfo("Encrypting and signing message")
+        logDebug("Sender fingerprint: \(senderFingerprint)")
+        logDebug("Recipient fingerprint: \(recipientFingerprint)")
         
         // First verify the recipient's public key is valid and trusted
         let verifyProcess = Process()
@@ -157,15 +159,14 @@ class GPGService {
             
             let verifyData = verifyPipe.fileHandleForReading.readDataToEndOfFile()
             let verifyOutput = String(data: verifyData, encoding: .utf8) ?? ""
-            print("Key verification output:")
-            print(verifyOutput)
+            logDebug("Key verification output: \(verifyOutput)")
             
             if verifyProcess.terminationStatus != 0 {
-                print("Error: Unable to verify recipient's public key")
+                logError("Unable to verify recipient's public key")
                 return nil
             }
         } catch {
-            print("Error verifying recipient's key: \(error)")
+            logError("Error verifying recipient's key: \(error)")
             return nil
         }
         
@@ -182,7 +183,7 @@ class GPGService {
             "--verbose"  // Add verbose output
         ]
         
-        print("Running GPG command with arguments: \(process.arguments?.joined(separator: " ") ?? "")")
+        logDebug("Running GPG command: \(process.arguments?.joined(separator: " ") ?? "")")
         
         let inputPipe = Pipe()
         let outputPipe = Pipe()
@@ -204,16 +205,17 @@ class GPGService {
             if process.terminationStatus != 0 {
                 let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
                 let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                print("GPG Error Output: \(errorMessage)")
-                print("GPG Exit Status: \(process.terminationStatus)")
+                logError("GPG encryption failed with status \(process.terminationStatus)")
+                logDebug("GPG Error Output: \(errorMessage)")
                 return nil
             }
             
             let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            logInfo("Message successfully encrypted and signed")
             return String(data: data, encoding: .utf8)
         } catch {
-            print("Error encrypting and signing: \(error)")
-            print("Process error: \(error.localizedDescription)")
+            logError("Error encrypting and signing: \(error)")
+            logDebug("Process error details: \(error.localizedDescription)")
             return nil
         }
     }
@@ -273,7 +275,7 @@ class GPGService {
             
             return (decryptedText, isVerified, senderInfo)
         } catch {
-            print("Error decrypting and verifying: \(error)")
+            logError("Error decrypting and verifying: \(error)")
             return (nil, false, nil)
         }
     }
@@ -306,7 +308,7 @@ class GPGService {
             let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
             return String(data: data, encoding: .utf8)
         } catch {
-            print("Error encrypting: \(error)")
+            logError("Error encrypting: \(error)")
             return nil
         }
     }
@@ -337,7 +339,7 @@ class GPGService {
             let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
             return String(data: data, encoding: .utf8)
         } catch {
-            print("Error decrypting: \(error)")
+            logError("Error decrypting: \(error)")
             return nil
         }
     }
@@ -368,7 +370,7 @@ class GPGService {
             let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
             return String(data: data, encoding: .utf8)
         } catch {
-            print("Error signing: \(error)")
+            logError("Error signing: \(error)")
             return nil
         }
     }
@@ -395,7 +397,7 @@ class GPGService {
             
             return process.terminationStatus == 0
         } catch {
-            print("Error verifying: \(error)")
+            logError("Error verifying: \(error)")
             return false
         }
     }

@@ -18,6 +18,18 @@ struct GPGApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Configure Logger
+        #if DEBUG
+        Logger.minimumLevel = .debug
+        #else
+        Logger.minimumLevel = .info
+        #endif
+        
+        logInfo("Application started")
         NSApp.activate(ignoringOtherApps: true)
+    }
+    
+    func applicationWillTerminate(_ notification: Notification) {
+        logInfo("Application terminating")
     }
 } 

@@ -191,7 +191,8 @@ build_and_run() {
     if [ "$DEBUG" -eq 1 ]; then
         log_info "Launching app in debug mode (stdout visible)..."
         echo -e "${BOLD}${PURPLE}───── APP OUTPUT START ─────${RESET}"
-        "$APP_BUNDLE/Contents/MacOS/$APP_NAME" 2>&1 | format_log &
+        # Set environment variable to indicate we're handling timestamps externally
+        GPGAPP_EXTERNAL_TIMESTAMPS=1 "$APP_BUNDLE/Contents/MacOS/$APP_NAME" 2>&1 | format_log &
     else
         log_info "Launching app in GUI mode..."
         open "$APP_BUNDLE"
