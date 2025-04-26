@@ -147,8 +147,13 @@ build_and_run() {
     touch "$APP_BUNDLE"
     
     # Open the app
-    echo "Launching updated app..."
-    open "$APP_BUNDLE"
+    if [ "$DEBUG" -eq 1 ]; then
+        echo "Launching app in debug mode (stdout visible)..."
+        "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+    else
+        echo "Launching app in GUI mode..."
+        open "$APP_BUNDLE"
+    fi
     
     # Update timestamp and reset flag
     LAST_BUILD_TIME=$(date +%s)

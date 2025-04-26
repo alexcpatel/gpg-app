@@ -271,6 +271,7 @@ struct ContentView: View {
         var selectedPublicKey: String = ""
         var isVerified: Bool = false
         var senderInfo: String = ""
+        var expectedSender: String = ""
     }
     
     enum OperationMode: String, CaseIterable, Identifiable {
@@ -320,6 +321,19 @@ struct ContentView: View {
                             onSelect: { key in
                                 currentMode.selectedPublicKey.wrappedValue = key
                                 currentMode.outputText.wrappedValue = ""
+                            },
+                            onRefreshKeys: loadKeys
+                        )
+                    } else {
+                        KeySelectionMenu(
+                            title: "Expected Sender (Optional)",
+                            keys: publicKeys,
+                            selectedKey: currentMode.expectedSender.wrappedValue,
+                            onSelect: { key in
+                                currentMode.expectedSender.wrappedValue = key
+                                currentMode.outputText.wrappedValue = ""
+                                currentMode.isVerified.wrappedValue = false
+                                currentMode.senderInfo.wrappedValue = ""
                             },
                             onRefreshKeys: loadKeys
                         )
@@ -421,10 +435,7 @@ struct ContentView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                        .disabled(
-                            currentMode.selectedPrivateKey.wrappedValue.isEmpty || 
-                            currentMode.inputText.wrappedValue.isEmpty
-                        )
+                        .disabled(false) // Temporarily remove the disabled condition completely
                     }
                     
                     Spacer()
@@ -440,6 +451,16 @@ struct ContentView: View {
             } message: {
                 Text(errorMessage)
             }
+        }
+        .onChange(of: receiveMode.inputText) { newValue in
+            print("Input text changed: '\(newValue)', isEmpty: \(newValue.isEmpty), trimmed isEmpty: \(newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)")
+        }
+        .onChange(of: selectedMode) { newMode in
+            print("Mode changed to: \(newMode)")
+            // Remove the auto-fill functionality
+        }
+        .onChange(of: receiveMode.selectedPrivateKey) { newValue in
+            print("Private key changed to: \(newValue), isEmpty: \(newValue.isEmpty)")
         }
     }
     
@@ -468,17 +489,21 @@ struct ContentView: View {
         }
         
         sendMode.outputText = result
+        print("Encrypted message output:\n\(result)")
         sendMode.isVerified = false
         sendMode.senderInfo = ""
     }
     
     private func receiveMessage() {
+        print("receiveMessage called. inputText: \(receiveMode.inputText), selectedPrivateKey: \(receiveMode.selectedPrivateKey)")
         let result = GPGService.shared.decryptAndVerify(
             message: receiveMode.inputText,
             recipientPrivateKey: receiveMode.selectedPrivateKey
         )
+        print("decryptAndVerify result: \(result)")
         
         guard let decryptedText = result.decryptedText else {
+            print("Decryption failed, result: \(result)")
             errorMessage = "Failed to decrypt message"
             showError = true
             return
@@ -487,6 +512,38 @@ struct ContentView: View {
         receiveMode.outputText = decryptedText
         receiveMode.isVerified = result.isVerified
         receiveMode.senderInfo = result.senderInfo ?? ""
+        print("Decryption succeeded. Output: \(decryptedText)")
+        
+        // Add verification against expected sender if specified
+        if !receiveMode.expectedSender.isEmpty {
+            if let senderInfo = result.senderInfo {
+                // Extract fingerprint from expected sender key string
+                let expectedFingerprint = extractFingerprint(from: receiveMode.expectedSender)
+                // Extract fingerprint from actual sender info (assuming it's in the same format)
+                if !senderInfo.contains(expectedFingerprint) {
+                    receiveMode.isVerified = false
+                    errorMessage = "Message was not signed by the expected sender"
+                    showError = true
+                    print("Sender mismatch: expected \(expectedFingerprint), got \(senderInfo)")
+                }
+            } else {
+                receiveMode.isVerified = false
+                errorMessage = "Could not verify sender identity"
+                showError = true
+                print("No senderInfo in result")
+            }
+        }
+    }
+    
+    // Helper function to extract fingerprint from key string
+    private func extractFingerprint(from keyString: String) -> String {
+        if let range = keyString.range(of: "[", options: .backwards),
+           let endRange = keyString.range(of: "]", options: .backwards) {
+            let startIndex = range.upperBound
+            let endIndex = endRange.lowerBound
+            return String(keyString[startIndex..<endIndex])
+        }
+        return keyString
     }
 }
 
