@@ -221,18 +221,29 @@ class GPGService {
     }
     
     /// Receive message: Decrypt and verify a message with the recipient's private key
-    func decryptAndVerify(message: String, recipientPrivateKey: String) -> (decryptedText: String?, isVerified: Bool, senderInfo: String?) {
+    func decryptAndVerify(message: String, recipientPrivateKey: String, passphrase: String? = nil) -> (decryptedText: String?, isVerified: Bool, senderInfo: String?) {
         // Extract fingerprint from the key string
         let recipientFingerprint = extractFingerprint(from: recipientPrivateKey)
         
+        logInfo("Attempting to decrypt and verify message")
+        logDebug("Using fingerprint: \(recipientFingerprint)")
+        
         let process = Process()
         process.executableURL = URL(fileURLWithPath: gpgPath)
-        process.arguments = [
+        var arguments = [
             "--decrypt",
             "--armor",
             "--local-user", recipientFingerprint,
-            "--status-fd", "2"  // Output status to stderr
+            "--status-fd", "2",  // Output status to stderr
+            "--verbose"  // Add verbose output
         ]
+        
+        // Add pinentry-mode loopback if passphrase is provided
+        if passphrase != nil {
+            arguments.append(contentsOf: ["--pinentry-mode", "loopback", "--batch", "--yes"])
+        }
+        
+        process.arguments = arguments
         
         let inputPipe = Pipe()
         let outputPipe = Pipe()
@@ -242,41 +253,150 @@ class GPGService {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
         
-        do {
-            try process.run()
+        // Set up environment for passphrase handling
+        if let passphrase = passphrase {
+            process.environment = ["GPG_TTY": "/dev/null"]
             
-            let inputData = message.data(using: .utf8)!
-            try inputPipe.fileHandleForWriting.write(contentsOf: inputData)
-            try inputPipe.fileHandleForWriting.close()
-            
-            process.waitUntilExit()
-            
-            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            
-            let decryptedText = String(data: outputData, encoding: .utf8)
-            let statusOutput = String(data: errorData, encoding: .utf8) ?? ""
-            
-            // Parse status output for signature verification
-            let isVerified = statusOutput.contains("[GNUPG:] GOODSIG")
-            
-            // Extract sender info
-            var senderInfo: String? = nil
-            if let range = statusOutput.range(of: "[GNUPG:] GOODSIG") {
-                let substr = statusOutput[range.upperBound...]
-                if let endRange = substr.range(of: "\n") {
-                    let sigLine = String(substr[..<endRange.lowerBound])
-                    let components = sigLine.trimmingCharacters(in: .whitespaces).components(separatedBy: " ")
-                    if components.count >= 2 {
-                        senderInfo = components.dropFirst(2).joined(separator: " ")
+            // Create a temporary file for the passphrase
+            let passTempFile = FileManager.default.temporaryDirectory.appendingPathComponent("gpg_pass_\(UUID().uuidString)")
+            do {
+                try passphrase.write(to: passTempFile, atomically: true, encoding: .utf8)
+                arguments.append("--passphrase-file")
+                arguments.append(passTempFile.path)
+                process.arguments = arguments
+                
+                // Execute code within a do block to scope the cleanup
+                do {
+                    // Use try-finally pattern instead of defer at end of scope
+                    defer {
+                        try? FileManager.default.removeItem(at: passTempFile)
+                    }
+                    
+                    try process.run()
+                    
+                    let inputData = message.data(using: .utf8)!
+                    try inputPipe.fileHandleForWriting.write(contentsOf: inputData)
+                    try inputPipe.fileHandleForWriting.close()
+                    
+                    process.waitUntilExit()
+                    
+                    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                    
+                    let decryptedText = String(data: outputData, encoding: .utf8)
+                    let statusOutput = String(data: errorData, encoding: .utf8) ?? ""
+                    
+                    logDebug("GPG decrypt status: \(process.terminationStatus)")
+                    logDebug("GPG status output: \(statusOutput)")
+                    
+                    if process.terminationStatus != 0 {
+                        logError("Decryption failed with status \(process.terminationStatus)")
+                        logError("Error details: \(statusOutput)")
+                        
+                        // Print the actual command that was run
+                        let cmdLine = ([gpgPath] + arguments).joined(separator: " ")
+                        logError("Command used: \(cmdLine)")
+                        
+                        // Log input message format
+                        logDebug("Message format check - starts with correct header: \(message.hasPrefix("-----BEGIN PGP MESSAGE-----"))")
+                        logDebug("Message format check - ends with correct footer: \(message.hasSuffix("-----END PGP MESSAGE-----"))")
+                        
+                        return (nil, false, nil)
+                    }
+                    
+                    // If we got here but have no decrypted text, that's strange
+                    if decryptedText == nil || decryptedText?.isEmpty == true {
+                        logError("Decryption completed but no output was produced")
+                        logError("Error details: \(statusOutput)")
+                        return (nil, false, nil)
+                    }
+                    
+                    // Parse status output for signature verification
+                    let isVerified = statusOutput.contains("[GNUPG:] GOODSIG")
+                    
+                    // Extract sender info
+                    var senderInfo: String? = nil
+                    if let range = statusOutput.range(of: "[GNUPG:] GOODSIG") {
+                        let substr = statusOutput[range.upperBound...]
+                        if let endRange = substr.range(of: "\n") {
+                            let sigLine = String(substr[..<endRange.lowerBound])
+                            let components = sigLine.trimmingCharacters(in: .whitespaces).components(separatedBy: " ")
+                            if components.count >= 2 {
+                                senderInfo = components.dropFirst(2).joined(separator: " ")
+                            }
+                        }
+                    }
+                    
+                    logInfo("Message successfully decrypted, verification status: \(isVerified)")
+                    return (decryptedText, isVerified, senderInfo)
+                }
+            } catch {
+                logError("Failed to create passphrase file: \(error)")
+                return (nil, false, nil)
+            }
+        } else {
+            do {
+                try process.run()
+                
+                let inputData = message.data(using: .utf8)!
+                try inputPipe.fileHandleForWriting.write(contentsOf: inputData)
+                try inputPipe.fileHandleForWriting.close()
+                
+                process.waitUntilExit()
+                
+                let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                
+                let decryptedText = String(data: outputData, encoding: .utf8)
+                let statusOutput = String(data: errorData, encoding: .utf8) ?? ""
+                
+                logDebug("GPG decrypt status: \(process.terminationStatus)")
+                logDebug("GPG status output: \(statusOutput)")
+                
+                if process.terminationStatus != 0 {
+                    logError("Decryption failed with status \(process.terminationStatus)")
+                    logError("Error details: \(statusOutput)")
+                    
+                    // Print the actual command that was run
+                    let cmdLine = ([gpgPath] + arguments).joined(separator: " ")
+                    logError("Command used: \(cmdLine)")
+                    
+                    // Log input message format
+                    logDebug("Message format check - starts with correct header: \(message.hasPrefix("-----BEGIN PGP MESSAGE-----"))")
+                    logDebug("Message format check - ends with correct footer: \(message.hasSuffix("-----END PGP MESSAGE-----"))")
+                    
+                    return (nil, false, nil)
+                }
+                
+                // If we got here but have no decrypted text, that's strange
+                if decryptedText == nil || decryptedText?.isEmpty == true {
+                    logError("Decryption completed but no output was produced")
+                    logError("Error details: \(statusOutput)")
+                    return (nil, false, nil)
+                }
+                
+                // Parse status output for signature verification
+                let isVerified = statusOutput.contains("[GNUPG:] GOODSIG")
+                
+                // Extract sender info
+                var senderInfo: String? = nil
+                if let range = statusOutput.range(of: "[GNUPG:] GOODSIG") {
+                    let substr = statusOutput[range.upperBound...]
+                    if let endRange = substr.range(of: "\n") {
+                        let sigLine = String(substr[..<endRange.lowerBound])
+                        let components = sigLine.trimmingCharacters(in: .whitespaces).components(separatedBy: " ")
+                        if components.count >= 2 {
+                            senderInfo = components.dropFirst(2).joined(separator: " ")
+                        }
                     }
                 }
+                
+                logInfo("Message successfully decrypted, verification status: \(isVerified)")
+                return (decryptedText, isVerified, senderInfo)
+            } catch {
+                logError("Error decrypting and verifying: \(error)")
+                return (nil, false, nil)
             }
-            
-            return (decryptedText, isVerified, senderInfo)
-        } catch {
-            logError("Error decrypting and verifying: \(error)")
-            return (nil, false, nil)
         }
     }
     
@@ -313,34 +433,134 @@ class GPGService {
         }
     }
     
-    func decrypt(message: String, privateKey: String) -> String? {
+    func decrypt(message: String, privateKey: String, passphrase: String? = nil) -> String? {
         // Extract fingerprint from the key string
         let fingerprint = extractFingerprint(from: privateKey)
         
+        logInfo("Attempting to decrypt message with legacy method")
+        logDebug("Using fingerprint: \(fingerprint)")
+        
         let process = Process()
         process.executableURL = URL(fileURLWithPath: gpgPath)
-        process.arguments = ["--decrypt", "--armor", "--local-user", fingerprint]
+        var arguments = ["--decrypt", "--armor", "--local-user", fingerprint, "--verbose"]
         
-        let inputPipe = Pipe()
-        let outputPipe = Pipe()
+        // Add pinentry-mode loopback if passphrase is provided
+        if passphrase != nil {
+            arguments.append(contentsOf: ["--pinentry-mode", "loopback", "--batch", "--yes"])
+        }
         
-        process.standardInput = inputPipe
-        process.standardOutput = outputPipe
-        
-        do {
-            try process.run()
+        // Set up environment for passphrase handling
+        if let passphrase = passphrase {
+            process.environment = ["GPG_TTY": "/dev/null"]
             
-            let inputData = message.data(using: .utf8)!
-            try inputPipe.fileHandleForWriting.write(contentsOf: inputData)
-            try inputPipe.fileHandleForWriting.close()
+            // Create a temporary file for the passphrase
+            let passTempFile = FileManager.default.temporaryDirectory.appendingPathComponent("gpg_pass_\(UUID().uuidString)")
+            do {
+                try passphrase.write(to: passTempFile, atomically: true, encoding: .utf8)
+                arguments.append("--passphrase-file")
+                arguments.append(passTempFile.path)
+                
+                // Set arguments before running
+                process.arguments = arguments
+                
+                // Execute within a do block to properly scope the defer statement
+                do {
+                    // Use defer at beginning of scope to ensure cleanup
+                    defer {
+                        try? FileManager.default.removeItem(at: passTempFile)
+                    }
+                    
+                    let inputPipe = Pipe()
+                    let outputPipe = Pipe()
+                    let errorPipe = Pipe()
+                    
+                    process.standardInput = inputPipe
+                    process.standardOutput = outputPipe
+                    process.standardError = errorPipe
+                    
+                    try process.run()
+                    
+                    let inputData = message.data(using: .utf8)!
+                    try inputPipe.fileHandleForWriting.write(contentsOf: inputData)
+                    try inputPipe.fileHandleForWriting.close()
+                    
+                    process.waitUntilExit()
+                    
+                    let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+                    
+                    logDebug("GPG decrypt status: \(process.terminationStatus)")
+                    logDebug("GPG error output: \(errorOutput)")
+                    
+                    if process.terminationStatus != 0 {
+                        logError("Decryption failed with status \(process.terminationStatus)")
+                        logDebug("Error output: \(errorOutput)")
+                        return nil
+                    }
+                    
+                    let decryptedText = String(data: data, encoding: .utf8)
+                    
+                    if decryptedText == nil || decryptedText?.isEmpty == true {
+                        logError("Decryption completed but no output was produced")
+                        logDebug("Error details: \(errorOutput)")
+                        return nil
+                    }
+                    
+                    logInfo("Message successfully decrypted")
+                    return decryptedText
+                }
+            } catch {
+                logError("Failed to create passphrase file: \(error)")
+                return nil
+            }
+        } else {
+            process.arguments = arguments
             
-            process.waitUntilExit()
+            let inputPipe = Pipe()
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
             
-            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8)
-        } catch {
-            logError("Error decrypting: \(error)")
-            return nil
+            process.standardInput = inputPipe
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+            
+            do {
+                try process.run()
+                
+                let inputData = message.data(using: .utf8)!
+                try inputPipe.fileHandleForWriting.write(contentsOf: inputData)
+                try inputPipe.fileHandleForWriting.close()
+                
+                process.waitUntilExit()
+                
+                let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+                
+                logDebug("GPG decrypt status: \(process.terminationStatus)")
+                logDebug("GPG error output: \(errorOutput)")
+                
+                if process.terminationStatus != 0 {
+                    logError("Decryption failed with status \(process.terminationStatus)")
+                    logDebug("Error output: \(errorOutput)")
+                    return nil
+                }
+                
+                let decryptedText = String(data: data, encoding: .utf8)
+                
+                if decryptedText == nil || decryptedText?.isEmpty == true {
+                    logError("Decryption completed but no output was produced")
+                    logDebug("Error details: \(errorOutput)")
+                    return nil
+                }
+                
+                logInfo("Message successfully decrypted")
+                return decryptedText
+            } catch {
+                logError("Error decrypting: \(error)")
+                return nil
+            }
         }
     }
     

@@ -265,6 +265,76 @@ struct MessageView: View {
     }
 }
 
+// MARK: - Passphrase Dialog
+struct PassphraseDialog: View {
+    @Binding var isPresented: Bool
+    @Binding var passphrase: String
+    var onCancel: () -> Void
+    var onSubmit: () -> Void
+    
+    @State private var localPassphrase: String = ""
+    @FocusState private var isFieldFocused: Bool
+    
+    var body: some View {
+        ZStack {
+            // Semi-transparent background
+            Color.black.opacity(0.3)
+                .edgesIgnoringSafeArea(.all)
+                .onTapGesture {
+                    // Don't dismiss when tapping outside
+                }
+            
+            // Dialog content
+            VStack(spacing: 16) {
+                Text("Enter Passphrase")
+                    .font(.headline)
+                    .padding(.top, 16)
+                
+                Text("Please enter the passphrase for your GPG key")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                
+                SecureField("Passphrase", text: $localPassphrase)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .padding(.horizontal)
+                    .focused($isFieldFocused)
+                    .onSubmit {
+                        passphrase = localPassphrase
+                        isPresented = false
+                        onSubmit()
+                    }
+                
+                HStack(spacing: 16) {
+                    Button("Cancel") {
+                        localPassphrase = ""
+                        isPresented = false
+                        onCancel()
+                    }
+                    .buttonStyle(.bordered)
+                    
+                    Button("Decrypt") {
+                        passphrase = localPassphrase
+                        isPresented = false
+                        onSubmit()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(localPassphrase.isEmpty)
+                }
+                .padding(.bottom, 16)
+            }
+            .frame(width: 350)
+            .background(Color(NSColor.windowBackgroundColor))
+            .cornerRadius(12)
+            .shadow(radius: 10)
+            .onAppear {
+                isFieldFocused = true
+            }
+        }
+    }
+}
+
 // MARK: - Content View
 struct ContentView: View {
     // Separate state for each mode
@@ -276,6 +346,12 @@ struct ContentView: View {
     @State private var showCopyToast: Bool = false
     @State private var errorMessage: String = ""
     @State private var showError: Bool = false
+    
+    // Passphrase state
+    @State private var showPassphrasePrompt: Bool = false
+    @State private var passphrase: String = ""
+    @State private var pendingDecryptionMessage: String = ""
+    @State private var pendingDecryptionKey: String = ""
     
     // Shared state
     @State private var privateKeys: [String] = []
@@ -359,16 +435,27 @@ struct ContentView: View {
                     }
                 }
                 
-                // Message Views
+                // Message Views - Use direct binding to the relevant mode
                 HStack(spacing: 20) {
-                    MessageView(
-                        title: selectedMode == .sendMessage ? "Message to Send" : "Encrypted Message",
-                        text: currentMode.inputText,
-                        isOutput: false,
-                        onClear: {
-                            currentMode.inputText.wrappedValue = ""
-                        }
-                    )
+                    if selectedMode == .sendMessage {
+                        MessageView(
+                            title: "Message to Send",
+                            text: $sendMode.inputText,
+                            isOutput: false,
+                            onClear: {
+                                sendMode.inputText = ""
+                            }
+                        )
+                    } else {
+                        MessageView(
+                            title: "Encrypted Message",
+                            text: $receiveMode.inputText,
+                            isOutput: false,
+                            onClear: {
+                                receiveMode.inputText = ""
+                            }
+                        )
+                    }
                     
                     Rectangle()
                         .fill(Color.gray.opacity(0.3))
@@ -376,26 +463,41 @@ struct ContentView: View {
                         .padding(.vertical, 8)
                     
                     ZStack(alignment: .topTrailing) {
-                        MessageView(
-                            title: selectedMode == .sendMessage ? "Encrypted Result" : "Decrypted Message",
-                            text: currentMode.outputText,
-                            isOutput: true,
-                            verificationInfo: selectedMode == .receiveMessage && !currentMode.outputText.wrappedValue.isEmpty ? 
-                                (isVerified: currentMode.isVerified.wrappedValue, senderInfo: currentMode.senderInfo.wrappedValue) : nil,
-                            onCopy: {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(currentMode.outputText.wrappedValue, forType: .string)
-                                withAnimation {
+                        if selectedMode == .sendMessage {
+                            MessageView(
+                                title: "Encrypted Result",
+                                text: $sendMode.outputText,
+                                isOutput: true,
+                                onCopy: {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(sendMode.outputText, forType: .string)
                                     showCopyToast = true
-                                    // Dismiss after 1.5 seconds
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                                         withAnimation {
                                             showCopyToast = false
                                         }
                                     }
                                 }
-                            }
-                        )
+                            )
+                        } else {
+                            MessageView(
+                                title: "Decrypted Message",
+                                text: $receiveMode.outputText,
+                                isOutput: true,
+                                verificationInfo: !receiveMode.outputText.isEmpty ? 
+                                    (isVerified: receiveMode.isVerified, senderInfo: receiveMode.senderInfo) : nil,
+                                onCopy: {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(receiveMode.outputText, forType: .string)
+                                    showCopyToast = true
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                        withAnimation {
+                                            showCopyToast = false
+                                        }
+                                    }
+                                }
+                            )
+                        }
                         
                         if showCopyToast {
                             HStack(spacing: 8) {
@@ -469,6 +571,22 @@ struct ContentView: View {
             } message: {
                 Text(errorMessage)
             }
+            
+            // Custom passphrase dialog
+            if showPassphrasePrompt {
+                PassphraseDialog(
+                    isPresented: $showPassphrasePrompt,
+                    passphrase: $passphrase,
+                    onCancel: {
+                        passphrase = ""
+                        errorMessage = "Decryption cancelled"
+                        showError = true
+                    },
+                    onSubmit: {
+                        decryptWithPassphrase()
+                    }
+                )
+            }
         }
         .onChange(of: receiveMode.inputText) { newValue in
             logDebug("Input text changed: '\(newValue)', isEmpty: \(newValue.isEmpty), trimmed isEmpty: \(newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)")
@@ -524,13 +642,77 @@ struct ContentView: View {
     
     private func receiveMessage() {
         logInfo("Decrypting and verifying message")
-        logDebug("Input text length: \(receiveMode.inputText.count), selected private key: \(receiveMode.selectedPrivateKey)")
         
+        // Debug detailed info about the text
+        let trimmedInput = receiveMode.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        logDebug("Input text raw length: \(receiveMode.inputText.count)")
+        logDebug("Input text trimmed length: \(trimmedInput.count)")
+        logDebug("Selected private key: \(receiveMode.selectedPrivateKey)")
+        
+        // Debug the message format
+        if trimmedInput.isEmpty {
+            logError("Input text is empty after trimming")
+            errorMessage = "Cannot decrypt: Input text is empty"
+            showError = true
+            return
+        }
+        
+        // Print the first 20 characters (if available) to help debug
+        let previewStart = trimmedInput.prefix(min(20, trimmedInput.count))
+        logDebug("Message preview start: \"\(previewStart)...\"")
+        
+        // Check PGP message format
+        let hasCorrectHeader = trimmedInput.hasPrefix("-----BEGIN PGP MESSAGE-----")
+        let hasCorrectFooter = trimmedInput.hasSuffix("-----END PGP MESSAGE-----")
+        
+        logDebug("Message format check - starts with correct header: \(hasCorrectHeader)")
+        logDebug("Message format check - ends with correct footer: \(hasCorrectFooter)")
+        
+        if !hasCorrectHeader || !hasCorrectFooter {
+            logError("Invalid PGP message format: Missing proper BEGIN/END markers")
+            errorMessage = "Invalid PGP message format. Message must start with '-----BEGIN PGP MESSAGE-----' and end with '-----END PGP MESSAGE-----'"
+            showError = true
+            return
+        }
+        
+        // Store the message and key for potential passphrase prompt
+        pendingDecryptionMessage = receiveMode.inputText
+        pendingDecryptionKey = receiveMode.selectedPrivateKey
+        
+        // First try without passphrase
         let result = GPGService.shared.decryptAndVerify(
             message: receiveMode.inputText,
             recipientPrivateKey: receiveMode.selectedPrivateKey
         )
         
+        if result.decryptedText == nil {
+            // Decryption failed, likely needs passphrase
+            logInfo("Initial decryption failed, prompting for passphrase")
+            showPassphrasePrompt = true
+            return
+        }
+        
+        handleDecryptionResult(result)
+    }
+    
+    private func decryptWithPassphrase() {
+        showPassphrasePrompt = false
+        
+        logInfo("Attempting decryption with passphrase")
+        
+        let result = GPGService.shared.decryptAndVerify(
+            message: pendingDecryptionMessage,
+            recipientPrivateKey: pendingDecryptionKey,
+            passphrase: passphrase
+        )
+        
+        // Clear passphrase from memory as soon as possible
+        passphrase = ""
+        
+        handleDecryptionResult(result)
+    }
+    
+    private func handleDecryptionResult(_ result: (decryptedText: String?, isVerified: Bool, senderInfo: String?)) {
         guard let decryptedText = result.decryptedText else {
             logError("Decryption failed")
             errorMessage = "Failed to decrypt message"

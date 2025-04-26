@@ -19,11 +19,8 @@ struct GPGApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Configure Logger
-        #if DEBUG
+        // Always show debug level logs for development
         Logger.minimumLevel = .debug
-        #else
-        Logger.minimumLevel = .info
-        #endif
         
         logInfo("Application started")
         NSApp.activate(ignoringOtherApps: true)
