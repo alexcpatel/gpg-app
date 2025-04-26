@@ -4,15 +4,40 @@ class GPGService {
     static let shared = GPGService()
     private let gpgPath = "/usr/local/bin/gpg"
     
-    private init() {}
+    private init() {
+        // Verify GPG is installed and accessible
+        guard FileManager.default.fileExists(atPath: gpgPath) else {
+            print("Error: GPG not found at \(gpgPath)")
+            return
+        }
+        
+        // Test GPG connection
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: gpgPath)
+        process.arguments = ["--version"]
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            print("GPG Version: \(output)")
+        } catch {
+            print("Error testing GPG: \(error)")
+        }
+    }
     
     func listPrivateKeys() -> [String] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: gpgPath)
-        process.arguments = ["--list-secret-keys", "--with-colons", "--with-fingerprint"]
+        process.arguments = ["--list-secret-keys", "--with-colons"]
         
         let pipe = Pipe()
         process.standardOutput = pipe
+        process.standardError = pipe
         
         do {
             try process.run()
@@ -21,7 +46,15 @@ class GPGService {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: data, encoding: .utf8) ?? ""
             
-            return parseKeys(from: output, isPrivate: true)
+            if process.terminationStatus != 0 {
+                print("Error listing private keys. Status: \(process.terminationStatus)")
+                print("Output: \(output)")
+                return []
+            }
+            
+            let keys = parseKeys(from: output, isPrivate: true)
+            print("Found \(keys.count) private keys")
+            return keys
         } catch {
             print("Error listing private keys: \(error)")
             return []
@@ -31,10 +64,11 @@ class GPGService {
     func listPublicKeys() -> [String] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: gpgPath)
-        process.arguments = ["--list-keys", "--with-colons", "--with-fingerprint"]
+        process.arguments = ["--list-keys", "--with-colons"]
         
         let pipe = Pipe()
         process.standardOutput = pipe
+        process.standardError = pipe
         
         do {
             try process.run()
@@ -43,7 +77,15 @@ class GPGService {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: data, encoding: .utf8) ?? ""
             
-            return parseKeys(from: output, isPrivate: false)
+            if process.terminationStatus != 0 {
+                print("Error listing public keys. Status: \(process.terminationStatus)")
+                print("Output: \(output)")
+                return []
+            }
+            
+            let keys = parseKeys(from: output, isPrivate: false)
+            print("Found \(keys.count) public keys")
+            return keys
         } catch {
             print("Error listing public keys: \(error)")
             return []
@@ -53,24 +95,34 @@ class GPGService {
     private func parseKeys(from output: String, isPrivate: Bool) -> [String] {
         let lines = output.components(separatedBy: .newlines)
         var keys: [String] = []
-        var currentKey: (type: String, fingerprint: String, userID: String)? = nil
+        var currentFingerprint: String?
+        var currentUserID: String?
+        
+        print("Parsing \(lines.count) lines of GPG output")
         
         for line in lines {
             let components = line.components(separatedBy: ":")
-            if components.count > 9 {
-                let type = components[0]
-                let fingerprint = components[4]
-                let userID = components[9]
+            guard components.count >= 10 else { continue }
+            
+            let recordType = components[0]
+            
+            switch recordType {
+            case "sec" where isPrivate, "pub" where !isPrivate:
+                // Key record - get fingerprint
+                currentFingerprint = components[4]
                 
-                if (isPrivate && type == "sec") || (!isPrivate && type == "pub") {
-                    currentKey = (type: type, fingerprint: fingerprint, userID: userID)
-                } else if type == "fpr" && currentKey?.fingerprint == fingerprint {
-                    // Format: "Name <email> (fingerprint)"
-                    let name = currentKey?.userID ?? "Unknown"
-                    let formattedKey = "\(name) (\(fingerprint))"
+            case "uid" where currentFingerprint != nil:
+                // User ID record
+                currentUserID = components[9]
+                if let fingerprint = currentFingerprint, let userID = currentUserID {
+                    let formattedKey = "\(userID) (\(fingerprint))"
                     keys.append(formattedKey)
-                    currentKey = nil
+                    print("Added key: \(formattedKey)")
+                    currentFingerprint = nil
+                    currentUserID = nil
                 }
+            default:
+                break
             }
         }
         

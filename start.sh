@@ -7,6 +7,19 @@ BUILD_DIR="build"
 APP_NAME="GPGApp"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 
+# Cleanup function
+cleanup() {
+    echo "Cleaning up..."
+    # Kill the app if running
+    pkill -f "$APP_NAME" || true
+    # Kill fswatch if running
+    [ -n "$FSWATCH_PID" ] && kill $FSWATCH_PID 2>/dev/null || true
+    exit 0
+}
+
+# Set up trap for script termination
+trap cleanup EXIT INT TERM
+
 # Function to check if we need a clean build
 need_clean_build() {
     # Check if Package.swift or Package.resolved has changed
@@ -97,8 +110,7 @@ FSWATCH_PID=$!
 while true; do
     if ! is_app_running; then
         echo "App was quit. Stopping watch."
-        kill $FSWATCH_PID
-        exit 0
+        cleanup
     fi
     sleep 1
 done 
