@@ -990,4 +990,4 @@ struct RightRoundedShape: Shape {
         path.closeSubpath()
         return path
     }
-} 
+}
