@@ -382,13 +382,43 @@ struct ContentView: View {
         ZStack(alignment: .topLeading) {
             VStack(spacing: 16) {
                 // Mode selector
-                Picker("", selection: $selectedMode) {
-                    ForEach(OperationMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
+                HStack(spacing: 0) {
+                    Button(action: { selectedMode = .sendMessage }) {
+                        Text("Send Message")
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 2)
+                            .padding(.bottom, 4)
+                            .background(selectedMode == .sendMessage ? 
+                                Color(NSColor.controlBackgroundColor) : 
+                                Color.clear)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .frame(height: 26)
+                    
+                    Button(action: { selectedMode = .receiveMessage }) {
+                        Text("Receive Message")
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 2)
+                            .padding(.bottom, 4)
+                            .background(selectedMode == .receiveMessage ? 
+                                Color(NSColor.controlBackgroundColor) : 
+                                Color.clear)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .frame(height: 26)
                 }
-                .pickerStyle(SegmentedPickerStyle())
-                .padding(.top)
+                .background {
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5)
+                        .background(Color(NSColor.controlBackgroundColor).opacity(0.2))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .padding(.top, 8)
                 
                 // Key Selection - moved up for better flow
                 HStack(spacing: 20) {
@@ -915,5 +945,49 @@ struct NSPopUpButtonWrapper: NSViewRepresentable {
                 parent.selectedItem = parent.items[sender.indexOfSelectedItem]
             }
         }
+    }
+}
+
+struct LeftRoundedShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + 5, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + 5, y: rect.maxY))
+        path.addArc(center: CGPoint(x: rect.minX + 5, y: rect.maxY - 5),
+                    radius: 5,
+                    startAngle: .degrees(90),
+                    endAngle: .degrees(180),
+                    clockwise: false)
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + 5))
+        path.addArc(center: CGPoint(x: rect.minX + 5, y: rect.minY + 5),
+                    radius: 5,
+                    startAngle: .degrees(180),
+                    endAngle: .degrees(270),
+                    clockwise: false)
+        return path
+    }
+}
+
+struct RightRoundedShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - 5, y: rect.minY))
+        path.addArc(center: CGPoint(x: rect.maxX - 5, y: rect.minY + 5),
+                    radius: 5,
+                    startAngle: .degrees(270),
+                    endAngle: .degrees(0),
+                    clockwise: false)
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - 5))
+        path.addArc(center: CGPoint(x: rect.maxX - 5, y: rect.maxY - 5),
+                    radius: 5,
+                    startAngle: .degrees(0),
+                    endAngle: .degrees(90),
+                    clockwise: false)
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 } 
